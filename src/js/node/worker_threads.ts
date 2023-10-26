@@ -1,10 +1,8 @@
-// import type { Readable, Writable } from "node:stream";
-// import type { WorkerOptions } from "node:worker_threads";
+const EventEmitter = require("node:events");
+const { throwNotImplemented } = require("$shared");
+
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
-
-const EventEmitter = require("node:events");
-const { throwNotImplemented } = require("../internal/shared");
 
 const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
@@ -14,15 +12,15 @@ let [_workerData, _threadId, _receiveMessageOnPort] = $lazy("worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
-const emittedWarnings = new Set();
-function emitWarning(type, message) {
+const emittedWarnings = new Set<string>();
+function emitWarning(type: string, message: string): void {
   if (emittedWarnings.has(type)) return;
   emittedWarnings.add(type);
   // process.emitWarning(message); // our printing is bad
   console.warn("[bun] Warning:", message);
 }
 
-function injectFakeEmitter(Class) {
+function buildFakeEmitter(Class): typeof Class {
   function messageEventHandler(event: MessageEvent) {
     return event.data;
   }
@@ -33,16 +31,16 @@ function injectFakeEmitter(Class) {
 
   const wrappedListener = Symbol("wrappedListener");
 
-  function wrapped(run, listener) {
-    const callback = function (event) {
+  function wrapped(run: (event) => unknown, listener) {
+    const callback = event => {
       return listener(run(event));
     };
     listener[wrappedListener] = callback;
     return callback;
   }
 
-  function functionForEventType(event, listener) {
-    switch (event) {
+  function functionForEventType(type: string, listener) {
+    switch (type) {
       case "error":
       case "messageerror": {
         return wrapped(errorEventHandler, listener);
@@ -54,50 +52,54 @@ function injectFakeEmitter(Class) {
     }
   }
 
-  Class.prototype.on = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener));
+  Class.prototype.on = function (type: string, listener) {
+    this.addEventListener(type, functionForEventType(type, listener));
 
     return this;
   };
 
-  Class.prototype.off = function (event, listener) {
+  Class.prototype.off = function (type: string, listener) {
     if (listener) {
-      this.removeEventListener(event, listener[wrappedListener] || listener);
+      this.removeEventListener(type, listener[wrappedListener] || listener);
     } else {
-      this.removeEventListener(event);
+      this.removeEventListener(type);
     }
 
     return this;
   };
 
-  Class.prototype.once = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener), { once: true });
+  Class.prototype.once = function (type: string, listener) {
+    this.addEventListener(type, functionForEventType(type, listener), { once: true });
 
     return this;
   };
 
-  function EventClass(eventName) {
-    if (eventName === "error" || eventName === "messageerror") {
-      return ErrorEvent;
-    }
+  function EventClass(type: string) {
+    switch (type) {
+      case "error":
+      case "messageerror": {
+        return ErrorEvent;
+      }
 
-    return MessageEvent;
+      default: {
+        return MessageEvent;
+      }
+    }
   }
 
-  Class.prototype.emit = function (event, ...args) {
-    this.dispatchEvent(new (EventClass(event))(event, ...args));
+  Class.prototype.emit = function (type: string, ...args) {
+    this.dispatchEvent(new (EventClass(type))(type, ...args));
 
     return this;
   };
 
   Class.prototype.prependListener = Class.prototype.on;
   Class.prototype.prependOnceListener = Class.prototype.once;
+
+  return Class;
 }
 
-const _MessagePort = globalThis.MessagePort;
-injectFakeEmitter(_MessagePort);
-
-const MessagePort = _MessagePort;
+const MessagePort = buildFakeEmitter(globalThis.MessagePort);
 
 let resourceLimits = {};
 
@@ -126,7 +128,9 @@ function fakeParentPort() {
     get() {
       return self.onmessageerror;
     },
-    set(value) {},
+    set(value) {
+      self.onmessageerror = value;
+    },
   });
 
   Object.defineProperty(fake, "postMessage", {
@@ -136,9 +140,7 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "close", {
-    value() {
-      return process.exit(0);
-    },
+    value() {},
   });
 
   Object.defineProperty(fake, "start", {
@@ -179,7 +181,7 @@ function getEnvironmentData() {
   return process.env;
 }
 
-function setEnvironmentData(env: any) {
+function setEnvironmentData(env) {
   process.env = env;
 }
 
@@ -206,7 +208,7 @@ class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
 
-  // this is used by wt.Worker.terminate();
+  // this is used by .terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
 
@@ -288,7 +290,7 @@ class Worker extends EventEmitter {
     return this.#worker.postMessage(...args);
   }
 
-  #onClose(e) {
+  #onClose(e: CloseEvent) {
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }
@@ -304,7 +306,7 @@ class Worker extends EventEmitter {
 
   #onMessageError(event: MessageEvent) {
     // TODO: is this right?
-    this.emit("messageerror", (event as any).error ?? event.data ?? event);
+    this.emit("messageerror", event.data ?? event);
   }
 
   #onOpen() {
