@@ -131,7 +131,6 @@ test("threadId module and worker property is consistent", async () => {
 test("message port starts at message listener registration", async () => {
   const worker = new Worker(new URL("./worker-message-port.ts", import.meta.url).href);
   const messageChannel = new MessageChannel();
-  messageChannel.port1.start();
   const responsePromise = new Promise(resolve => {
     messageChannel.port1.on("message", message => resolve(message));
   });
