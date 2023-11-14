@@ -60,7 +60,10 @@ bash ./all-dependencies.sh
 
 cd ../
 
+# Install bun dependencies
 bun i
+# Install test dependencies
+cd test; bun i; cd ..
 
 # TODO(@paperdave): do not use the Makefile please
 has_exec "make" || fail "'make' is missing"
@@ -68,7 +71,7 @@ make runtime_js fallback_decoder bun_error node-fallbacks
 
 mkdir -p build
 rm -f build/CMakeCache.txt
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -G Ninja -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
+cmake -B build -S . -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Debug -G Ninja -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
 ninja -C build
 
 printf "Checking if built bun functions\n"
